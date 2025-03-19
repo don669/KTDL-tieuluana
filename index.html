@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bản đồ quốc gia</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet-search/2.9.8/leaflet-search.min.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet-search/2.9.8/leaflet-search.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+        }
+        #map {
+            height: 100vh;
+            width: 70vw;
+            float: left;
+        }
+        #info-container {
+            position: absolute;
+            right: 0;
+            top: 0;
+            width: 28vw;
+            height: 100vh;
+            background: white;
+            padding: 15px;
+            overflow: auto;
+            border-left: 2px solid #ddd;
+        }
+        #temperature-table-container {
+            max-height: 250px;
+            overflow-y: auto;
+            border: 1px solid #ccc;
+            margin-bottom: 15px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 5px;
+            border: 1px solid #ccc;
+            text-align: center;
+        }
+        canvas {
+            width: 100% !important;
+            height: auto !important;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="map"></div>
+    
+    <div id="info-container">
+        <div id="info"><b>Nhấn vào một quốc gia để xem thông tin</b></div>
+        <div id="temperature-data"></div>
+        <canvas id="temperatureChart"></canvas>
+        <h3>Top 5 quốc gia lạnh nhất</h3>
+        <canvas id="coldestChart"></canvas>
+        <h3>Top 5 quốc gia nóng nhất</h3>
+        <canvas id="hottestChart"></canvas>
+    </div>
+
+    
+
+    <script>
+        var map = L.map('map', {
+            maxBounds: [[-85, -180], [85, 180]],
+            maxBoundsViscosity: 1.0
+        }).setView([20, 105], 4);
+
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            attribution: '&copy; Esri'
+        }).addTo(map);
+
+        var countryLayer;
+        var countryClusters = {};
+        var clusterColors = {};
+        var clusterColorList = ["green", "red", "blue", "purple", "orange", "yellow", "cyan", "pink"];
+        var temperatureChart = null;
+
+        function fetchTemperature(country) {
+            if (country === "United States of America") country = "United States";
+
+            fetch(`http://127.0.0.1:8000/get_temperature?country=${country}`)
+                .then(response => response.json())
+                .then(data => {
+                    let years = [];
+                    let temperatures = [];
+
+                    data.forEach(row => {
+                        years.push(row.year);
+                        temperatures.push(row["Average surface temperature"]);
+                    });
+
+                    // Cập nhật biểu đồ nhiệt độ
+                    updateChart(country, years, temperatures);
+                })
+                .catch(error => {
+                    console.error("Lỗi:", error);
+                });
+        }
+
+        function updateChart(country, years, temperatures) {
+            let ctx = document.getElementById("temperatureChart").getContext("2d");
+
+            if (temperatureChart) {
+                temperatureChart.destroy();
+            }
+
+            temperatureChart = new Chart(ctx, {
+                type: "line",
+                data: {
+                    labels: years,
+                    datasets: [{
+                        label: `Nhiệt độ trung bình tại ${country}`,
+                        data: temperatures,
+                        backgroundColor: "rgba(255, 99, 132, 0.2)",
+                        borderColor: "rgba(255, 99, 132, 1)",
+                        borderWidth: 2,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        x: { title: { display: true, text: "Năm" } },
+                        y: { title: { display: true, text: "Nhiệt độ (°C)" } }
+                    }
+                }
+            });
+        }
+
+        function fetchClusters() {
+            fetch("http://127.0.0.1:8000/get_clusters")
+                .then(response => response.json())
+                .then(data => {
+                    data.forEach(item => {
+                        countryClusters[item.Entity] = item.Cluster;
+                    });
+
+                    let uniqueClusters = [...new Set(Object.values(countryClusters))];
+                    uniqueClusters.forEach((cluster, index) => {
+                        clusterColors[cluster] = clusterColorList[index % clusterColorList.length];
+                    });
+
+                    updateMapColors();
+                })
+                .catch(error => console.error("Lỗi tải clusters:", error));
+        }
+
+        function updateMapColors() {
+            countryLayer.eachLayer(layer => {
+                let countryName = layer.feature.properties.name;
+                if (countryName === "United States of America") countryName = "United States";
+
+                if (countryClusters[countryName] !== undefined) {
+                    let clusterId = countryClusters[countryName];
+                    let color = clusterColors[clusterId];
+
+                    layer.setStyle({
+                        fillColor: color,
+                        fillOpacity: 0.6,
+                        color: "black",
+                        weight: 1
+                    });
+
+                    layer.on("click", function () {
+                        document.getElementById('info').innerHTML = `
+                            <b>Quốc gia:</b> ${countryName} <br>
+                            <b>Nhóm cụm nhiệt độ:</b> ${clusterId}`;
+                        fetchTemperature(countryName);
+                    });
+                }
+            });
+        }
+
+        fetch('https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json')
+            .then(response => response.json())
+            .then(data => {
+                countryLayer = L.geoJSON(data, {
+                    style: { color: "orange", weight: 1 },
+                    onEachFeature: function (feature, layer) {
+                        layer.on('click', function () {
+                            let country = feature.properties.name;
+                            document.getElementById('info').innerHTML = `<b>Quốc gia:</b> ${country}`;
+                            fetchTemperature(country);
+                        });
+                    }
+                }).addTo(map);
+
+                fetchClusters();
+            });
+
+        function fetchTopCountries() {
+            fetch("http://127.0.0.1:8000/get_top_countries")
+                .then(response => response.json())
+                .then(data => {
+                    let coldest = data.coldest.map(item => item.Entity);
+                    let coldestTemps = data.coldest.map(item => item["Average surface temperature"]);
+                    
+                    let hottest = data.hottest.map(item => item.Entity);
+                    let hottestTemps = data.hottest.map(item => item["Average surface temperature"]);
+
+                    updateTopChart("coldestChart", "Top 5 quốc gia lạnh nhất", coldest, coldestTemps, "blue");
+                    updateTopChart("hottestChart", "Top 5 quốc gia nóng nhất", hottest, hottestTemps, "red");
+                })
+                .catch(error => console.error("Lỗi tải dữ liệu top quốc gia:", error));
+        }
+
+        function updateTopChart(canvasId, label, labels, data, color) {
+            let ctx = document.getElementById(canvasId).getContext("2d");
+
+            new Chart(ctx, {
+                type: "bar",
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: label,
+                        data: data,
+                        backgroundColor: color,
+                        borderColor: "black",
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        x: { title: { display: true, text: "Quốc gia" } },
+                        y: { title: { display: true, text: "Nhiệt độ (°C)" } }
+                    }
+                }
+            });
+        }
+        fetchTopCountries();
+
+        
+
+    </script>
+
+</body>
+</html>
