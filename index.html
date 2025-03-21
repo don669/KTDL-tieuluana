@@ -59,6 +59,7 @@
     <div id="map"></div>
     
     <div id="info-container">
+        <button id="toggleDBSCAN" onclick="toggleDBSCANMode()">Chế độ DBSCAN Predict</button>
         <div id="info"><b>Nhấn vào một quốc gia để xem thông tin</b></div>
         <div id="temperature-data"></div>
         <canvas id="temperatureChart"></canvas>
@@ -66,14 +67,23 @@
         <canvas id="coldestChart"></canvas>
         <h3>Top 5 quốc gia nóng nhất</h3>
         <canvas id="hottestChart"></canvas>
+        <h3>Dự báo nhiệt độ</h3>
+        <canvas id="forecastChart"></canvas>
+        
     </div>
+    
+
 
     
 
     <script>
         var map = L.map('map', {
             maxBounds: [[-85, -180], [85, 180]],
-            maxBoundsViscosity: 1.0
+            maxBoundsViscosity: 1.0,
+            zoomSnap: 1,
+            zoomDelta: 1,
+            minZoom: 3.25, // Thiết lập mức zoom tối thiểu
+            maxZoom: 10
         }).setView([20, 105], 4);
 
         L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
@@ -155,11 +165,23 @@
                 })
                 .catch(error => console.error("Lỗi tải clusters:", error));
         }
+        
 
         function updateMapColors() {
             countryLayer.eachLayer(layer => {
                 let countryName = layer.feature.properties.name;
                 if (countryName === "United States of America") countryName = "United States";
+                if (countryName === "Democratic Republic of the Congo") countryName = "Central African Republic"
+                if (countryName === "United Republic of Tanzania") countryName = "Tanzania"
+                if (countryName === "Somaliland") countryName = "Somalia"
+                if (countryName === "Republic of the Congo") countryName = "Congo"
+                if (countryName === "Ivory Coast") countryName = "Cote d'Ivoire"
+                if (countryName === "Guinea Bissau") countryName = "Guinea-Bissau"
+                if (countryName === "Swaziland") countryName = "Eswatini"
+                if (countryName === "Czech Republic") countryName = "Czechia"
+                if (countryName === "Republic of Serbia") countryName = "Serbia"
+                if (countryName === "Macedonia") countryName = "North Macedonia"
+
 
                 if (countryClusters[countryName] !== undefined) {
                     let clusterId = countryClusters[countryName];
@@ -177,6 +199,7 @@
                             <b>Quốc gia:</b> ${countryName} <br>
                             <b>Nhóm cụm nhiệt độ:</b> ${clusterId}`;
                         fetchTemperature(countryName);
+                        fetchAndDisplayForecast(countryName);
                     });
                 }
             });
@@ -197,6 +220,7 @@
                 }).addTo(map);
 
                 fetchClusters();
+                
             });
 
         function fetchTopCountries() {
@@ -240,7 +264,95 @@
             });
         }
         fetchTopCountries();
+      
+        function fetchAndDisplayForecast(country) {
+            if (country === "United States of America") country = "United States";
 
+            let forecastUrl = `http://127.0.0.1:8000/predict_temperature?entity=${country}&years=36`;
+
+            fetch(forecastUrl)
+                .then(response => response.json())
+                .then(forecastData => {
+                    let forecastYears = Object.keys(forecastData.forecast).map(y => parseInt(y));
+                    let forecastTemps = Object.values(forecastData.forecast);
+
+                    updateForecastChart(country, forecastYears, forecastTemps);
+                })
+                .catch(error => {
+                    console.error("Lỗi:", error);
+                });
+        }
+
+
+        function updateForecastChart(country, forecastYears, forecastTemps) {
+            let ctx = document.getElementById("forecastChart").getContext("2d");
+
+            // Kiểm tra nếu biểu đồ đã tồn tại thì hủy nó trước khi tạo mới
+            if (window.forecastChart instanceof Chart) {
+                window.forecastChart.destroy();
+            }
+
+            window.forecastChart = new Chart(ctx, {
+                type: "line",
+                data: {
+                    labels: forecastYears,
+                    datasets: [{
+                        label: `Dự báo nhiệt độ tại ${country}`,
+                        data: forecastTemps,
+                        backgroundColor: "rgba(255, 159, 64, 0.2)",
+                        borderColor: "rgba(255, 159, 64, 1)",
+                        borderWidth: 2,
+                        borderDash: [5, 5], // Hiển thị nét đứt cho phần dự báo
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        x: { title: { display: true, text: "Năm" } },
+                        y: { title: { display: true, text: "Nhiệt độ (°C)" } }
+                    }
+                }
+            });
+        }
+
+        var useDBSCANPredict = false;
+
+        function toggleDBSCANMode() {
+            useDBSCANPredict = !useDBSCANPredict;
+            let button = document.getElementById("toggleDBSCAN");
+            button.innerText = useDBSCANPredict ? "Chế độ DBSCAN Thường" : "Chế độ DBSCAN Predict";
+            
+            // Fetch lại clusters theo chế độ đã chọn
+            fetchClusters();
+        }
+
+        function fetchClusters() {
+            let apiUrl = useDBSCANPredict ? "http://127.0.0.1:8000/get_clusters_predict" : "http://127.0.0.1:8000/get_clusters";
+
+            fetch(apiUrl)
+                .then(response => response.json())
+                .then(data => {
+                    countryClusters = {};
+                    clusterColors = {};
+                    let uniqueClusters = new Set();
+
+                    data.forEach(item => {
+                        countryClusters[item.Entity] = item.Cluster;
+                        uniqueClusters.add(item.Cluster);
+                    });
+
+                    // Cập nhật màu cụm
+                    let clusterList = Array.from(uniqueClusters);
+                    clusterList.forEach((cluster, index) => {
+                        clusterColors[cluster] = clusterColorList[index % clusterColorList.length];
+                    });
+
+                    updateMapColors();
+                })
+                .catch(error => console.error("Lỗi tải clusters:", error));
+        }
+        
         
 
     </script>
