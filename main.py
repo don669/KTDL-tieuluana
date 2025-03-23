@@ -5,7 +5,7 @@ from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import StandardScaler
 import statsmodels.api as sm
 import os
-from randomforest import apply_dbscan_predict1
+from kMeans import apply_kmeans_clustering
 
 app = FastAPI()
 
@@ -21,6 +21,7 @@ app.add_middleware(
 DATA_PATH = "average-monthly-surface-temperature.csv"
 PREDICTED_DATA_PATH = "temperature_forecast.csv"
 
+df_forecast = pd.read_csv(PREDICTED_DATA_PATH)
 df = pd.read_csv(DATA_PATH)
 
 @app.get("/get_top_countries")
@@ -69,25 +70,19 @@ def get_clusters():
 
 @app.get("/predict_temperature")
 def predict_temperature(entity: str, years: int = 10):
-    country_data = df[df["Entity"] == entity]
+    # Lọc dữ liệu dự báo theo quốc gia
+    country_data = df_forecast[df_forecast["Entity"] == entity]
+
     if country_data.empty:
         raise HTTPException(status_code=404, detail="Quốc gia không tồn tại trong dữ liệu")
-    
-    avg_temp_by_year = country_data.groupby("year")["Average surface temperature"].mean().reset_index()
-    avg_temp_by_year.set_index("year", inplace=True)
 
-    # Giới hạn years tối đa để tránh overfitting
-    years = min(years, 20)
+    # Giới hạn số năm dự báo
+    country_data = country_data.sort_values("year").head(years)
 
-    model = sm.tsa.statespace.SARIMAX(avg_temp_by_year, order=(1, 1, 1), seasonal_order=(1, 1, 1, 12))
-    results = model.fit()
-    
-    future_years = list(range(int(avg_temp_by_year.index[-1]) + 1, int(avg_temp_by_year.index[-1]) + years + 1))
-    forecast = results.forecast(steps=years)
-    
+    # Trả về dự báo
     return {
         "entity": entity,
-        "forecast": {int(year): float(temp) for year, temp in zip(future_years, forecast.tolist())}
+        "forecast": {int(row["year"]): float(row["Average surface temperature"]) for _, row in country_data.iterrows()}
     }
 
 def apply_dbscan_predict():
@@ -112,6 +107,53 @@ def apply_dbscan_predict():
 
     return df_filtered[["Entity", "Cluster"]].to_dict(orient="records")
 
+CLUSTER_RESULT_PATH = "/Applications/webtemp/dbscan_clusters.csv"
+
 @app.get("/get_clusters_predict")
 def get_clusters_predict():
-    return apply_dbscan_predict1()
+    if not os.path.exists(CLUSTER_RESULT_PATH):
+        raise HTTPException(status_code=404, detail="Chưa có dữ liệu phân cụm, vui lòng chạy phân cụm trước.")
+    df_clusters = pd.read_csv(CLUSTER_RESULT_PATH)
+    return df_clusters.to_dict(orient="records")
+
+
+KMEANS_RESULT_PATH_BF_PREDICT = "/Applications/webtemp/kmeans_clusters_bf_predict.csv"
+@app.get("/get_clusters_kmeans_bf_predict")
+def get_clusters_kmeans_bf_predict():
+    try:
+        df_clusters = pd.read_csv(KMEANS_RESULT_PATH)
+        return df_clusters.to_dict(orient="records")
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Chưa có dữ liệu phân cụm K-Means. Hãy chạy apply_kmeans_clustering() trước.")
+    
+
+
+
+KMEANS_RESULT_PATH = "/Applications/webtemp/kmeans_clusters.csv"
+@app.get("/get_clusters_kmeans")
+def get_clusters_kmeans():
+    try:
+        df_clusters = pd.read_csv(KMEANS_RESULT_PATH)
+        return df_clusters.to_dict(orient="records")
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Chưa có dữ liệu phân cụm K-Means. Hãy chạy apply_kmeans_clustering() trước.")
+    
+
+@app.get("/compare_dbscan_kmeans")
+def compare():
+    try:
+        df_dbscan = pd.read_csv(CLUSTER_RESULT_PATH)
+        df_kmeans = pd.read_csv(KMEANS_RESULT_PATH)
+        
+        df_dbscan.rename(columns={"Cluster": "DBSCAN_Cluster"}, inplace=True)
+        df_kmeans.rename(columns={"Cluster": "Kmeans_Cluster"}, inplace=True)
+        
+        df_compare = pd.merge(df_dbscan, df_kmeans, on="Entity", how="inner")
+
+        return df_compare.to_dict(orient="records")
+    
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Chưa có dữ liệu phân cụm")        
+    
+
+

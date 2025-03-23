@@ -60,6 +60,7 @@
     
     <div id="info-container">
         <button id="toggleDBSCAN" onclick="toggleDBSCANMode()">Chế độ DBSCAN Predict</button>
+        <button id="compareClusters" onclick="getClustersKmeans()">So sánh K-Means</button>
         <div id="info"><b>Nhấn vào một quốc gia để xem thông tin</b></div>
         <div id="temperature-data"></div>
         <canvas id="temperatureChart"></canvas>
@@ -185,7 +186,18 @@
 
                 if (countryClusters[countryName] !== undefined) {
                     let clusterId = countryClusters[countryName];
-                    let color = clusterColors[clusterId];
+                    let color;
+                    if (clusterId === -1) {
+                        color = "#1E90FF"; // Xanh da trời (đậm hơn)
+                    } else if (clusterId === 0) {
+                        color = "#008000"; // Xanh lá (đậm hơn)
+                    } else if (clusterId === 1) {
+                        color = "#FF0000"; // Đỏ (đậm hơn)
+                    } else if (clusterId === 2) {
+                        color = "#800080"; // Tím (đậm hơn)
+                    } else {
+                        color = "#696969"; // Xám đậm cho cụm khác
+                    }
 
                     layer.setStyle({
                         fillColor: color,
@@ -333,6 +345,7 @@
             fetch(apiUrl)
                 .then(response => response.json())
                 .then(data => {
+                    let oldClusterColors = { ...clusterColors }; // Lưu màu cụm trước đó
                     countryClusters = {};
                     clusterColors = {};
                     let uniqueClusters = new Set();
@@ -345,13 +358,89 @@
                     // Cập nhật màu cụm
                     let clusterList = Array.from(uniqueClusters);
                     clusterList.forEach((cluster, index) => {
-                        clusterColors[cluster] = clusterColorList[index % clusterColorList.length];
+                        if (oldClusterColors.hasOwnProperty(cluster)) {
+                            clusterColors[cluster] = oldClusterColors[cluster]; // Giữ màu cũ
+                        } else {
+                            clusterColors[cluster] = clusterColorList[index % clusterColorList.length]; // Gán màu mới nếu cụm chưa có
+                        }
                     });
 
                     updateMapColors();
                 })
                 .catch(error => console.error("Lỗi tải clusters:", error));
         }
+
+
+
+        function getClustersKmeans() {
+            fetch("http://127.0.0.1:8000/get_clusters_kmeans")
+            .then(response => response.json())
+            .then(data => {
+                    data.forEach(item => {
+                        countryClusters[item.Entity] = item.Cluster;
+                    });
+
+                    let uniqueClusters = [...new Set(Object.values(countryClusters))];
+                    uniqueClusters.forEach((cluster, index) => {
+                        clusterColors[cluster] = clusterColorList[index % clusterColorList.length];
+                    });
+
+                    updateMapWithComparison();
+                })
+                .catch(error => console.error("Lỗi tải clusters:", error));  
+        }
+
+        function updateMapWithComparison() {
+            countryLayer.eachLayer(layer => {
+                let countryName = layer.feature.properties.name;
+                if (countryName === "United States of America") countryName = "United States";
+                if (countryName === "Democratic Republic of the Congo") countryName = "Central African Republic"
+                if (countryName === "United Republic of Tanzania") countryName = "Tanzania"
+                if (countryName === "Somaliland") countryName = "Somalia"
+                if (countryName === "Republic of the Congo") countryName = "Congo"
+                if (countryName === "Ivory Coast") countryName = "Cote d'Ivoire"
+                if (countryName === "Guinea Bissau") countryName = "Guinea-Bissau"
+                if (countryName === "Swaziland") countryName = "Eswatini"
+                if (countryName === "Czech Republic") countryName = "Czechia"
+                if (countryName === "Republic of Serbia") countryName = "Serbia"
+                if (countryName === "Macedonia") countryName = "North Macedonia"
+
+
+                if (countryClusters[countryName] !== undefined) {
+                    let clusterId = countryClusters[countryName];
+
+                    // Định nghĩa màu sắc cho từng cụm K-Means
+                    let color;
+                    if (clusterId === 0) {
+                        color = "#FF0000"; // Đỏ (Cụm 0)
+                    } else if (clusterId === 1) {
+                        color = "#1E90FF"; // Xanh da trời (Cụm 1)
+                    } else if (clusterId === 2) {
+                        color = "#800080"; // Tím (Cụm 2)
+                    } else if (clusterId === 3) {
+                        color = "#008000"; // Xanh lá (Cụm 3)
+                    } else {
+                        color = "#696969"; // Xám đậm cho cụm khác
+                    }
+
+                    layer.setStyle({
+                        fillColor: color,
+                        fillOpacity: 0.6,
+                        color: "black",
+                        weight: 1
+                    });
+
+                    layer.on("click", function () {
+                        document.getElementById('info').innerHTML = `
+                            <b>Quốc gia:</b> ${countryName} <br>
+                            <b>Nhóm cụm nhiệt độ:</b> ${clusterId}`;
+                        fetchTemperature(countryName);
+                        fetchAndDisplayForecast(countryName);
+                    });
+                }
+            });
+        }
+
         
         
 
